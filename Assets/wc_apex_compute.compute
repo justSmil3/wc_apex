@@ -1,0 +1,102 @@
+#pragma kernel Apex
+#pragma kernel Edge
+ 
+RWStructuredBuffer<float> Terrain;  
+RWStructuredBuffer<float> Edges;
+
+StructuredBuffer<float2> EdgeCoordinates;
+
+float2 LowestPointPosition;
+float LowestPoint;
+int resolution;
+float steepness;
+
+float dist(int x, int y, float2 otherPos)
+{
+    return sqrt(pow(otherPos.x - x, 2) + pow(otherPos.y - y, 2));
+}
+
+[numthreads(32, 1, 1)]
+void Apex(uint3 id : SV_DispatchThreadID)
+{
+	// only iterate over the points that are not at the low end
+    if (Terrain[id.x] != LowestPoint)
+    {
+        int x = id.x % resolution;
+        int y = (int) (id.x / resolution);
+	
+        float minimalDistance = 1.#INF;
+		// iterate over the low point coordinates that are at the edges and calculate the lowest distance to one of them
+        [loop]
+        for (int i = 0; i < EdgeCoordinates.Length; i++)
+        {
+            float2 edge = EdgeCoordinates[i];
+			
+            float distance = dist(x, y, EdgeCoordinates[i]);
+            if (distance < minimalDistance)
+            {
+                minimalDistance = distance;
+            }
+        }
+		
+		// move terrain height towards the lowest value based on the distance 
+        Terrain[id.x] = Terrain[id.x] * (minimalDistance / (resolution * (1 - steepness))) + LowestPoint;
+
+    }
+}
+
+[numthreads(32, 1, 1)]
+ void Edge(uint3 id : SV_DispatchThreadID)
+{
+    // calculate starting x and y values
+    int x = id.x % resolution;
+    int y = (int) (id.x / resolution);
+    
+    int surrounding = 0;
+    
+    // check if the terrain is clipped to the lowes value, and if it is at the edge of this clipping
+    // hier kann noch einiges an performance gesparrt werden, indem man nicht ueber alle terrain coordinates 
+    // iteriert sondern immer nur ueber die kernel, dabei verliert man zwar etwas genauigkeit aber dass sollte bei den aufloesungen 
+    // die man hat nicht wirklich auffallen 
+    
+    if (Terrain[id.x] <= LowestPoint + steepness)
+    {
+        int ny = -1;
+
+        while (ny <= 1)
+        {
+            if (y > 0 && y < resolution - 1)
+            {
+                int yidx = id.x + ny * resolution;
+                if (x != resolution - 1)
+                {
+                    if (Terrain[yidx + 1] <= LowestPoint + steepness)
+                        surrounding++;
+                }
+                else
+                    surrounding++;
+				
+                if (Terrain[yidx] <= LowestPoint + steepness)
+                    surrounding++;
+        
+                if (x != 0)
+                {
+                    if (Terrain[yidx - 1] <= LowestPoint + steepness)
+                        surrounding++;
+                }
+                else
+                    surrounding++;
+            }
+            else
+                surrounding += 3;
+            ny++;
+        }
+		
+		// set all terrain tiles to 1 that are on an edge for visualizatino purposes 
+        if (surrounding < 9)
+        {
+            Edges[id.x] = 1;
+        }
+        Terrain[id.x] = LowestPoint;
+    }
+}
